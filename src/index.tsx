@@ -25,6 +25,7 @@ type ServiceInfo = {
   unitFileState: string;
   description?: string;
   loadState?: string;
+  error?: string;
 };
 
 const getServices = callable<[], ServiceInfo[]>("get_services");
@@ -67,6 +68,14 @@ function Content() {
     setBusy(svc.unit, "running", true);
     try {
       const updated = await setServiceRunning(svc.unit, running);
+      if (updated?.error) {
+        toaster.toast({
+          title: "Tower Control",
+          body: `Failed to ${running ? "start" : "stop"} ${svc.unit}: ${updated.error}`
+        });
+        void refresh();
+        return;
+      }
       setServices(prev => prev.map(s => (s.unit === svc.unit ? { ...s, ...updated } : s)));
     } catch (e) {
       toaster.toast({
@@ -84,6 +93,14 @@ function Content() {
     setBusy(svc.unit, "enabled", true);
     try {
       const updated = await setServiceEnabled(svc.unit, enabled);
+      if (updated?.error) {
+        toaster.toast({
+          title: "Tower Control",
+          body: `Failed to ${enabled ? "enable" : "disable"} ${svc.unit}: ${updated.error}`
+        });
+        void refresh();
+        return;
+      }
       setServices(prev => prev.map(s => (s.unit === svc.unit ? { ...s, ...updated } : s)));
     } catch (e) {
       toaster.toast({

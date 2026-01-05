@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import shutil
 from typing import Any, Dict, List, Sequence, Tuple
 
 # The decky plugin module is located at decky-loader/plugin
@@ -25,10 +26,33 @@ class SystemctlError(RuntimeError):
     pass
 
 
+_SYSTEMCTL_BIN = shutil.which("systemctl") or "/usr/bin/systemctl"
+
+
+def _systemctl_exists() -> bool:
+    return bool(_SYSTEMCTL_BIN) and os.path.exists(_SYSTEMCTL_BIN)
+
+
+def _format_systemctl_error(action: str, unit: str, rc: int, out: str, err: str) -> str:
+    bits = []
+    if err:
+        bits.append(err)
+    if out and out not in bits:
+        bits.append(out)
+    details = " | ".join(bits) if bits else f"systemctl {action} failed"
+    return f"{details} (rc={rc})"
+
+
+def _with_error(payload: Dict[str, Any], error: str) -> Dict[str, Any]:
+    return {**payload, "error": error}
+
+
 async def _run_systemctl(args: Sequence[str]) -> Tuple[int, str, str]:
     """Run systemctl safely (no shell). Returns (returncode, stdout, stderr)."""
+    if not _systemctl_exists():
+        return 127, "", f"systemctl not found at {_SYSTEMCTL_BIN}"
     proc = await asyncio.create_subprocess_exec(
-        "systemctl",
+        _SYSTEMCTL_BIN,
         "--no-pager",
         *args,
         stdout=asyncio.subprocess.PIPE,
@@ -186,12 +210,19 @@ class Plugin:
             raise ValueError("unit is not allowlisted")
 
         action = "start" if running else "stop"
-        rc, out, err = await _run_systemctl([action, unit])
-        if rc != 0:
-            msg = err or out or f"systemctl {action} failed"
-            raise SystemctlError(msg)
-
-        return await self.get_service_status(unit)
+        try:
+            rc, out, err = await _run_systemctl([action, unit])
+            if rc != 0:
+                decky.logger.warning(
+                    f"systemctl {action} failed for {unit}: rc={rc} err={err} out={out}"
+                )
+                status = await self.get_service_status(unit)
+                return _with_error(status, _format_systemctl_error(action, unit, rc, out, err))
+            return await self.get_service_status(unit)
+        except Exception as e:
+            decky.logger.exception(f"Unexpected error during systemctl {action} {unit}")
+            status = await self.get_service_status(unit)
+            return _with_error(status, str(e))
 
     async def set_service_enabled(self, unit: str, enabled: bool) -> Dict[str, Any]:
         """Enable/disable an allowlisted unit (start on boot), return updated status.
@@ -202,27 +233,62 @@ class Plugin:
         if not self._is_allowed(unit):
             raise ValueError("unit is not allowlisted")
 
-        # Inspect current status to handle special states like masked/static.
-        current = await self._get_unit_status(unit)
-        if enabled and current.get("unitFileState") == "static":
-            raise SystemctlError("unit is static and cannot be enabled/disabled")
+        action = "enable" if enabled else "disable"
+        try:
+            # Inspect current status to handle special states like masked/static.
+            current = await self._get_unit_status(unit)
+            if enabled and current.get("unitFileState") == "static":
+                status = await self.get_service_status(unit)
+                return _with_error(status, "unit is static and cannot be enabled/disabled")
 
-        if enabled:
-            # If masked, unmask first.
-            if current.get("unitFileState") == "masked":
-                rc, out, err = await _run_systemctl(["unmask", unit])
+            if enabled:
+                # If masked, unmask first.
+                if current.get("unitFileState") == "masked":
+                    rc, out, err = await _run_systemctl(["unmask", unit])
+                    if rc != 0:
+                        decky.logger.warning(
+                            f"systemctl unmask failed for {unit}: rc={rc} err={err} out={out}"
+                        )
+                        status = await self.get_service_status(unit)
+                        return _with_error(status, _format_systemctl_error("unmask", unit, rc, out, err))
+
+                rc, out, err = await _run_systemctl(["enable", unit])
                 if rc != 0:
-                    msg = err or out or "systemctl unmask failed"
-                    raise SystemctlError(msg)
+                    decky.logger.warning(
+                        f"systemctl enable failed for {unit}: rc={rc} err={err} out={out}"
+                    )
+                    status = await self.get_service_status(unit)
+                    return _with_error(status, _format_systemctl_error("enable", unit, rc, out, err))
+            else:
+                rc, out, err = await _run_systemctl(["disable", unit])
+                if rc != 0:
+                    decky.logger.warning(
+                        f"systemctl disable failed for {unit}: rc={rc} err={err} out={out}"
+                    )
+                    status = await self.get_service_status(unit)
+                    return _with_error(status, _format_systemctl_error("disable", unit, rc, out, err))
 
-            rc, out, err = await _run_systemctl(["enable", unit])
-            if rc != 0:
-                msg = err or out or "systemctl enable failed"
-                raise SystemctlError(msg)
-        else:
-            rc, out, err = await _run_systemctl(["disable", unit])
-            if rc != 0:
-                msg = err or out or "systemctl disable failed"
-                raise SystemctlError(msg)
+            return await self.get_service_status(unit)
+        except Exception as e:
+            decky.logger.exception(f"Unexpected error during systemctl {action} {unit}")
+            status = await self.get_service_status(unit)
+            return _with_error(status, str(e))
 
-        return await self.get_service_status(unit)
+    async def debug_backend_identity(self) -> Dict[str, Any]:
+        """Return info useful to debug permission issues on-device."""
+        uid = os.getuid()
+        euid = os.geteuid()
+        user = os.environ.get("USER")
+        home = os.environ.get("HOME")
+
+        rc, out, err = await _run_systemctl(["--version"])
+        return {
+            "uid": uid,
+            "euid": euid,
+            "user": user,
+            "home": home,
+            "systemctl": _SYSTEMCTL_BIN,
+            "systemctl_ok": rc == 0,
+            "systemctl_version": out.splitlines()[0] if out else None,
+            "systemctl_error": err or None,
+        }
