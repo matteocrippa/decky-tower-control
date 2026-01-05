@@ -31,6 +31,17 @@ type ServiceInfo = {
 const getServices = callable<[], ServiceInfo[]>("get_services");
 const setServiceRunning = callable<[unit: string, running: boolean], ServiceInfo>("set_service_running");
 const setServiceEnabled = callable<[unit: string, enabled: boolean], ServiceInfo>("set_service_enabled");
+const debugBackendIdentity = callable<[], {
+  uid: number;
+  euid: number;
+  user?: string;
+  home?: string;
+  path?: string;
+  systemctl: string;
+  systemctl_ok: boolean;
+  systemctl_version?: string | null;
+  systemctl_error?: string | null;
+}>("debug_backend_identity");
 
 function Content() {
   const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -50,6 +61,29 @@ function Content() {
       });
     } finally {
       setIsRefreshing(false);
+    }
+  }, []);
+
+  const showDebug = useCallback(async () => {
+    try {
+      const info = await debugBackendIdentity();
+      const lines = [
+        `uid=${info.uid} euid=${info.euid} user=${info.user ?? "?"}`,
+        `home=${info.home ?? "?"}`,
+        `systemctl=${info.systemctl}`,
+        `systemctl_ok=${String(info.systemctl_ok)} ${info.systemctl_version ?? ""}`.trim(),
+        info.systemctl_error ? `systemctl_error=${info.systemctl_error}` : null,
+      ].filter(Boolean);
+
+      toaster.toast({
+        title: "Tower Control (debug)",
+        body: lines.join("\n"),
+      });
+    } catch (e) {
+      toaster.toast({
+        title: "Tower Control (debug)",
+        body: `Failed to get debug info: ${String(e)}`
+      });
     }
   }, []);
 
@@ -122,6 +156,15 @@ function Content() {
           disabled={isRefreshing}
         >
           {isRefreshing ? "Refreshing…" : "Refresh"}
+        </ButtonItem>
+      </PanelSectionRow>
+
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          onClick={() => showDebug()}
+        >
+          Debug info
         </ButtonItem>
       </PanelSectionRow>
 

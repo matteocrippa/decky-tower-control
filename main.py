@@ -28,9 +28,20 @@ class SystemctlError(RuntimeError):
 
 _SYSTEMCTL_BIN = shutil.which("systemctl") or "/usr/bin/systemctl"
 
+# Some distros expose the SSH daemon unit as an alias.
+_UNIT_ALIASES: Dict[str, str] = {
+    "ssh.service": "sshd.service",
+}
+
 
 def _systemctl_exists() -> bool:
-    return bool(_SYSTEMCTL_BIN) and os.path.exists(_SYSTEMCTL_BIN)
+    return bool(_SYSTEMCTL_BIN) and os.path.exists(_SYSTEMCTL_BIN) and os.access(_SYSTEMCTL_BIN, os.X_OK)
+
+
+def _canonical_unit(unit: str) -> str:
+    """Normalize to a canonical unit name for allowlisting."""
+    unit = _normalize_unit(unit)
+    return _UNIT_ALIASES.get(unit, unit)
 
 
 def _format_systemctl_error(action: str, unit: str, rc: int, out: str, err: str) -> str:
@@ -50,19 +61,26 @@ def _with_error(payload: Dict[str, Any], error: str) -> Dict[str, Any]:
 async def _run_systemctl(args: Sequence[str]) -> Tuple[int, str, str]:
     """Run systemctl safely (no shell). Returns (returncode, stdout, stderr)."""
     if not _systemctl_exists():
-        return 127, "", f"systemctl not found at {_SYSTEMCTL_BIN}"
-    proc = await asyncio.create_subprocess_exec(
-        _SYSTEMCTL_BIN,
-        "--no-pager",
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={
-            **os.environ,
-            "SYSTEMD_PAGER": "cat",
-            "SYSTEMD_COLORS": "0",
-        },
-    )
+        if not os.path.exists(_SYSTEMCTL_BIN):
+            return 127, "", f"systemctl not found at {_SYSTEMCTL_BIN}"
+        return 126, "", f"systemctl not executable at {_SYSTEMCTL_BIN}"
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _SYSTEMCTL_BIN,
+            "--no-pager",
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={
+                **os.environ,
+                "SYSTEMD_PAGER": "cat",
+                "SYSTEMD_COLORS": "0",
+            },
+        )
+    except OSError as e:
+        # Commonly surfaces as FileNotFoundError/PermissionError with just the path.
+        return 126 if getattr(e, "errno", None) == 13 else 127, "", f"failed to exec systemctl ({_SYSTEMCTL_BIN}): {e}"
     out_b, err_b = await proc.communicate()
     out = (out_b or b"").decode("utf-8", errors="replace").strip()
     err = (err_b or b"").decode("utf-8", errors="replace").strip()
@@ -105,11 +123,11 @@ class Plugin:
         return DEFAULT_UNITS
 
     def _is_allowed(self, unit: str) -> bool:
-        allowed = {u["unit"] for u in self._allowed_units()}
-        return unit in allowed
+        allowed = {_canonical_unit(u["unit"]) for u in self._allowed_units()}
+        return _canonical_unit(unit) in allowed
 
     async def _get_unit_status(self, unit: str) -> Dict[str, Any]:
-        unit = _normalize_unit(unit)
+        unit = _canonical_unit(unit)
         rc, out, err = await _run_systemctl(
             [
                 "show",
@@ -186,7 +204,7 @@ class Plugin:
         return services
 
     async def get_service_status(self, unit: str) -> Dict[str, Any]:
-        unit = _normalize_unit(unit)
+        unit = _canonical_unit(unit)
         if not self._is_allowed(unit):
             raise ValueError("unit is not allowlisted")
         status = await self._get_unit_status(unit)
@@ -205,7 +223,7 @@ class Plugin:
 
     async def set_service_running(self, unit: str, running: bool) -> Dict[str, Any]:
         """Start/stop an allowlisted unit and return its updated status."""
-        unit = _normalize_unit(unit)
+        unit = _canonical_unit(unit)
         if not self._is_allowed(unit):
             raise ValueError("unit is not allowlisted")
 
@@ -229,7 +247,7 @@ class Plugin:
 
         Note: enabling does not imply starting, and disabling does not imply stopping.
         """
-        unit = _normalize_unit(unit)
+        unit = _canonical_unit(unit)
         if not self._is_allowed(unit):
             raise ValueError("unit is not allowlisted")
 
@@ -280,6 +298,7 @@ class Plugin:
         euid = os.geteuid()
         user = os.environ.get("USER")
         home = os.environ.get("HOME")
+        path = os.environ.get("PATH")
 
         rc, out, err = await _run_systemctl(["--version"])
         return {
@@ -287,6 +306,7 @@ class Plugin:
             "euid": euid,
             "user": user,
             "home": home,
+            "path": path,
             "systemctl": _SYSTEMCTL_BIN,
             "systemctl_ok": rc == 0,
             "systemctl_version": out.splitlines()[0] if out else None,
