@@ -8,13 +8,10 @@ Toggle basic systemd services directly from Decky Loader.
 - Lets you start/stop services.
 - Lets you enable/disable services at boot.
 
-Allowlisted services (may vary by SteamOS version; missing units show as “not found”):
+Allowlisted services:
 
 - `sshd.service` (SSH Server)
-- `ssh.service` (alternative unit name on some distros)
 - `bluetooth.service` (Bluetooth)
-- `avahi-daemon.service` (Avahi / mDNS discovery)
-- `systemd-timesyncd.service` (time sync / NTP)
 
 ## Permissions / safety
 

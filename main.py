@@ -16,12 +16,8 @@ _UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]+(?:\\.[A-Za-z0-9@._:-]+)?$")
 # You can expand it later, but avoid turning this plugin into an arbitrary privileged command runner.
 DEFAULT_UNITS: List[Dict[str, str]] = [
     {"unit": "sshd.service", "label": "SSH Server"},
-    # Some distros use ssh.service; we include it for completeness.
-    {"unit": "ssh.service", "label": "SSH Server (ssh.service)"},
-    # Common services on SteamOS/Steam Deck (safe to toggle; if missing, UI will show as not found)
+    # Common service on SteamOS/Steam Deck (safe to toggle; if missing, UI will show as not found)
     {"unit": "bluetooth.service", "label": "Bluetooth"},
-    {"unit": "avahi-daemon.service", "label": "Avahi / mDNS Discovery"},
-    {"unit": "systemd-timesyncd.service", "label": "Time Sync (NTP)"},
 ]
 
 
@@ -90,14 +86,33 @@ class Plugin:
 
     async def _get_unit_status(self, unit: str) -> Dict[str, Any]:
         unit = _normalize_unit(unit)
-        _, out, _ = await _run_systemctl(
+        rc, out, err = await _run_systemctl(
             [
                 "show",
                 unit,
-                "--no-page",
                 "--property=LoadState,ActiveState,SubState,UnitFileState,Description",
             ]
         )
+
+        # If systemctl fails and returns no structured output, avoid returning a wall of "unknown".
+        if rc != 0 and not out:
+            # systemctl tends to report missing units via stderr.
+            if "not be found" in err or "not-found" in err:
+                return {
+                    "unit": unit,
+                    "exists": False,
+                    "active": False,
+                    "activeState": "inactive",
+                    "subState": "dead",
+                    "unitFileState": "not-found",
+                    "enabled": False,
+                    "canToggleEnable": False,
+                    "description": None,
+                    "loadState": "not-found",
+                }
+
+            decky.logger.warning(f"systemctl show failed for {unit}: rc={rc} err={err}")
+
         # systemctl show returns rc>0 for not-found units; still parse what we can
         data = _parse_kv_lines(out)
         load_state = data.get("LoadState", "unknown")
