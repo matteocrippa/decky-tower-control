@@ -1,0 +1,10 @@
+{
+  "name": "Tower Control",
+  "author": "Matteo Crippa",
+  "flags": ["root"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["systemd", "services", "ssh"],
+    "description": "Toggle systemd services (start/stop) directly from Decky."
+  }
+}
