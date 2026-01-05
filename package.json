@@ -1,6 +1,6 @@
 {
   "name": "decky-tower-control",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Toggle systemd services (start/stop) directly from Decky.",
   "type": "module",
   "scripts": {

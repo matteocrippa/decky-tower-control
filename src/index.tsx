@@ -11,7 +11,7 @@ import {
   toaster,
 } from "@decky/api"
 import { useCallback, useEffect, useState } from "react";
-import { FaPowerOff } from "react-icons/fa";
+import { FaPlane } from "react-icons/fa";
 
 type ServiceInfo = {
   unit: string;
@@ -159,7 +159,7 @@ export default definePlugin(() => {
     // The content of your plugin's menu
     content: <Content />,
     // The icon displayed in the plugin list
-    icon: <FaPowerOff />,
+    icon: <FaPlane />,
     // The function triggered when your plugin unloads
     onDismount() {
       console.log("Tower Control unloading")

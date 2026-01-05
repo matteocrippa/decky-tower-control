@@ -5,6 +5,6 @@
     "deckpass"  : "ssap",
     "deckkey"   : "-i ${env:HOME}/.ssh/id_rsa",
     "deckdir"   : "/home/deck",
-    "pluginname": "decky-tower-control",
+    "pluginname": "Tower Control",
     "python.analysis.extraPaths": []
 }

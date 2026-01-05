@@ -14,11 +14,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-NAME="$(node --input-type=module -e "import fs from 'fs'; console.log(JSON.parse(fs.readFileSync('package.json','utf8')).name)")"
+DIR_NAME="$(node --input-type=module -e "import fs from 'fs'; console.log(JSON.parse(fs.readFileSync('plugin.json','utf8')).name)")"
+PKG_NAME="$(node --input-type=module -e "import fs from 'fs'; console.log(JSON.parse(fs.readFileSync('package.json','utf8')).name)")"
 VERSION="$(node --input-type=module -e "import fs from 'fs'; console.log(JSON.parse(fs.readFileSync('package.json','utf8')).version)")"
 
-if [[ -z "$NAME" || -z "$VERSION" ]]; then
-  echo "Failed to read name/version from package.json" >&2
+if [[ -z "$DIR_NAME" || -z "$PKG_NAME" || -z "$VERSION" ]]; then
+  echo "Failed to read name/version from plugin.json/package.json" >&2
   exit 1
 fi
 
@@ -29,8 +30,8 @@ fi
 
 OUT_DIR="$ROOT_DIR/out"
 TMP_DIR="$ROOT_DIR/.package-tmp"
-PKG_DIR="$TMP_DIR/$NAME"
-ZIP_NAME="$NAME-v$VERSION.zip"
+PKG_DIR="$TMP_DIR/$DIR_NAME"
+ZIP_NAME="$DIR_NAME-v$VERSION.zip"
 
 rm -rf "$TMP_DIR"
 mkdir -p "$PKG_DIR" "$OUT_DIR"
